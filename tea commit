@@ -1,0 +1,90 @@
+# https://tea.xyz/what-is-this-file
+---
+version: 1.0.0
+codeOwners:
+  - '0x69528bba239059733128D7b6BDE4f6c45a7c844b'
+quorum: 1
+// SPDX-License-Identifier: GPL-3.0
+pragma solidity ^0.8.23;
+
+/* solhint-disable avoid-low-level-calls */
+/* solhint-disable no-empty-blocks */
+
+import "../interfaces/IAccount.sol";
+import "../interfaces/IEntryPoint.sol";
+import "./UserOperationLib.sol";
+
+/**
+ * @title BaseAccount
+ * @dev Basic account implementation.
+ * This contract provides the basic logic for implementing the IAccount interface - validateUserOp.
+ * Specific account implementation should inherit it and provide the account-specific logic.
+ */
+abstract contract BaseAccount is IAccount {
+    using UserOperationLib for PackedUserOperation;
+
+    /**
+     * @dev Return the account nonce.
+     * This method returns the next sequential nonce.
+     * For a nonce of a specific key, use `entrypoint.getNonce(account, key)`.
+     */
+    function getNonce() public view virtual returns (uint256) {
+        return entryPoint().getNonce(address(this), 0);
+    }
+
+    /**
+     * @dev Return the entryPoint used by this account.
+     * Subclass should return the current entryPoint used by this account.
+     */
+    function entryPoint() public view virtual returns (IEntryPoint);
+
+    /// @inheritdoc IAccount
+    function validateUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32 userOpHash,
+        uint256 missingAccountFunds
+    ) external virtual override returns (uint256 validationData) {
+        _requireFromEntryPoint();
+        validationData = _validateSignature(userOp, userOpHash);
+        _validateNonce(userOp.nonce);
+        _payPrefund(missingAccountFunds);
+    }
+
+    /**
+     * @dev Ensure the request comes from the known entrypoint.
+     */
+    function _requireFromEntryPoint() internal view virtual {
+        require(
+            msg.sender == address(entryPoint()),
+            "BaseAccount: Not from EntryPoint"
+        );
+    }
+
+    /**
+     * @dev Validate the signature is valid for this message.
+     * @param userOp - Validate the userOp.signature field.
+     * @param userOpHash - Convenient field: the hash of the request, to check the signature against.
+     * @return validationData - Signature and time-range of this operation.
+     */
+    function _validateSignature(
+        PackedUserOperation calldata userOp,
+        bytes32 userOpHash
+    ) internal virtual returns (uint256 validationData);
+
+    /**
+     * @dev Validate the nonce of the UserOperation.
+     * @param nonce - Nonce to validate.
+     */
+    function _validateNonce(uint256 nonce) internal view virtual {}
+
+    /**
+     * @dev Sends to the entrypoint (msg.sender) the missing funds for this transaction.
+     * @param missingAccountFunds - The minimum value this method should send the entrypoint.
+     */
+    function _payPrefund(uint256 missingAccountFunds) internal virtual {
+        if (missingAccountFunds != 0) {
+            (bool success, ) = payable(msg.sender).call{value: missingAccountFunds}("");
+            require(success, "BaseAccount: Failed to send funds to entrypoint");
+        }
+    }
+}
